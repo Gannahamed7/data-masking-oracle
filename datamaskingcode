@@ -1,0 +1,544 @@
+-- ============================================
+-- 1) DROP EXISTING TABLES
+-- ============================================
+
+BEGIN
+    FOR t IN (
+        SELECT table_name 
+        FROM user_tables 
+        WHERE table_name IN (
+            'MYDATA','MYDATA2','NAMES',
+            'STREET_NUMBERS','STREET_NAMES',
+            'CITIES','PHONE_NUMBERS'
+        )
+    ) LOOP
+        EXECUTE IMMEDIATE 'DROP TABLE ' || t.table_name || ' PURGE';
+    END LOOP;
+END;
+/
+
+-- ============================================
+-- 2) CREATE SOURCE TABLE
+-- ============================================
+
+CREATE TABLE mydata (
+    name           NVARCHAR2(100),
+    account_number VARCHAR2(11) PRIMARY KEY,
+    card_number    VARCHAR2(16),
+    national_id    VARCHAR2(14) UNIQUE,
+    address        NVARCHAR2(255),
+    phone_number   VARCHAR2(15),
+    email          VARCHAR2(100)
+);
+COMMIT;
+--
+============================================
+-- 4) COPY TO MYDATA2
+-- ============================================
+
+CREATE TABLE mydata2 AS SELECT * FROM mydata;
+ALTER TABLE mydata2 ADD CONSTRAINT pk_mydata2 PRIMARY KEY (account_number);
+
+-- ============================================
+-- 5) LOOKUP TABLES
+-- ============================================
+
+CREATE TABLE names ( name NVARCHAR2(100) PRIMARY KEY );
+INSERT INTO names VALUES ('Ahmed');
+INSERT INTO names VALUES ('Mohamed');
+INSERT INTO names VALUES ('Hassan');
+INSERT INTO names VALUES ('Omar');
+INSERT INTO names VALUES ('Youssef');
+INSERT INTO names VALUES ('Mostafa');
+INSERT INTO names VALUES ('Ali');
+INSERT INTO names VALUES ('Mahmoud');
+INSERT INTO names VALUES ('Khaled');
+INSERT INTO names VALUES ('Tarek');
+
+CREATE TABLE street_numbers ( street_no VARCHAR2(10) PRIMARY KEY );
+INSERT INTO street_numbers VALUES ('5');
+INSERT INTO street_numbers VALUES ('10');
+INSERT INTO street_numbers VALUES ('15');
+INSERT INTO street_numbers VALUES ('22');
+INSERT INTO street_numbers VALUES ('30');
+INSERT INTO street_numbers VALUES ('45');
+
+CREATE TABLE street_names ( name NVARCHAR2(100) PRIMARY KEY );
+INSERT INTO street_names VALUES ('El-Tahrir St');
+INSERT INTO street_names VALUES ('Salah Salem');
+INSERT INTO street_names VALUES ('Al-Nasr St');
+INSERT INTO street_names VALUES ('Corniche Rd');
+INSERT INTO street_names VALUES ('Station St');
+INSERT INTO street_names VALUES ('Al-Montaza St');
+
+CREATE TABLE cities ( city NVARCHAR2(100) PRIMARY KEY );
+INSERT INTO cities VALUES ('Cairo');
+INSERT INTO cities VALUES ('Giza');
+INSERT INTO cities VALUES ('Alexandria');
+INSERT INTO cities VALUES ('Aswan');
+INSERT INTO cities VALUES ('Fayoum');
+INSERT INTO cities VALUES ('Dakahlia');
+
+CREATE TABLE phone_numbers ( prefix VARCHAR2(4) PRIMARY KEY );
+INSERT INTO phone_numbers VALUES ('010');
+INSERT INTO phone_numbers VALUES ('011');
+INSERT INTO phone_numbers VALUES ('012');
+INSERT INTO phone_numbers VALUES ('015');
+
+COMMIT;
+
+-- ============================================
+-- 6) GENERIC HELPER FUNCTIONS
+-- ============================================
+
+-- 5) HELPER FUNCTIONS
+
+-- ============================================
+
+CREATE OR REPLACE FUNCTION mask_card_number(p_card VARCHAR2) 
+RETURN VARCHAR2 IS
+BEGIN
+  RETURN SUBSTR(p_card,1,4)
+         || RPAD('*', GREATEST(LENGTH(p_card)-8,0), '*')
+         || SUBSTR(p_card,-4);
+END;
+/
+
+
+CREATE OR REPLACE FUNCTION swap_digits(
+
+  p_in VARCHAR2,
+
+  p1   PLS_INTEGER,
+
+  p2   PLS_INTEGER
+
+) RETURN VARCHAR2 IS
+
+  v_out VARCHAR2(32767) := p_in;
+
+  c1    CHAR(1);
+
+  c2    CHAR(1);
+
+BEGIN
+
+  IF LENGTH(p_in) < GREATEST(p1,p2) THEN
+
+    RETURN p_in;
+
+  END IF;
+
+  c1 := SUBSTR(p_in,p1,1);
+
+  c2 := SUBSTR(p_in,p2,1);
+
+  v_out := SUBSTR(v_out,1,p1-1)||c2||SUBSTR(v_out,p1+1);
+
+  v_out := SUBSTR(v_out,1,p2-1)||c1||SUBSTR(v_out,p2+1);
+
+  RETURN v_out;
+
+END;
+
+/
+
+
+ 
+
+CREATE OR REPLACE FUNCTION mod_digits(
+
+  p_in VARCHAR2,
+
+  p1   PLS_INTEGER,
+
+  p2   PLS_INTEGER
+
+) RETURN VARCHAR2 IS
+
+  d1    NUMBER := TO_NUMBER(SUBSTR(p_in,p1,1));
+
+  d2    NUMBER := TO_NUMBER(SUBSTR(p_in,p2,1));
+
+  v_sum PLS_INTEGER := MOD(d1+d2,8);
+
+  v_out VARCHAR2(32767) := p_in;
+
+BEGIN
+
+  IF LENGTH(p_in) < GREATEST(p1,p2) THEN
+
+    RETURN p_in;
+
+  END IF;
+
+  v_out := SUBSTR(v_out,1,p1-1)
+
+       || TO_CHAR(v_sum)
+
+       || SUBSTR(v_out,p1+1);
+
+  RETURN v_out;
+
+END;
+
+/
+
+
+ 
+
+-- ============================================
+
+-- 6) ANONYMIZATION PROCEDURES
+
+-- ============================================
+
+CREATE OR REPLACE PROCEDURE fake_name(
+
+  p_table_name IN VARCHAR2,
+
+  p_column     IN VARCHAR2 DEFAULT 'name'
+
+) IS
+
+  TYPE rid_tab_t IS TABLE OF ROWID;
+
+  v_rids rid_tab_t;
+
+  v1     VARCHAR2(100);
+
+  v2     VARCHAR2(100);
+
+  v3     VARCHAR2(100);
+
+BEGIN
+
+  EXECUTE IMMEDIATE
+
+    'SELECT ROWID FROM '||p_table_name
+
+    BULK COLLECT INTO v_rids;
+
+ 
+
+  FOR i IN 1..v_rids.COUNT LOOP
+
+    SELECT name INTO v1 FROM (SELECT name FROM names ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM=1;
+
+    SELECT name INTO v2 FROM (SELECT name FROM names ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM=1;
+
+    SELECT name INTO v3 FROM (SELECT name FROM names ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM=1;
+
+ 
+
+    EXECUTE IMMEDIATE
+
+      'UPDATE '||p_table_name||
+
+      ' SET '||p_column||' = :1 WHERE ROWID = :2'
+
+      USING (v1||' '||v2||' '||v3), v_rids(i);
+
+  END LOOP;
+
+ 
+
+  COMMIT;
+
+END;
+
+/
+
+
+ 
+
+CREATE OR REPLACE PROCEDURE fake_address(
+
+  p_table_name IN VARCHAR2,
+
+  p_column     IN VARCHAR2 DEFAULT 'address'
+
+) IS
+
+  TYPE rid_tab_t IS TABLE OF ROWID;
+
+  v_rids rid_tab_t;
+
+  v_no   VARCHAR2(10);
+
+  v_st   VARCHAR2(100);
+
+  v_ct   VARCHAR2(100);
+
+BEGIN
+
+  EXECUTE IMMEDIATE
+
+    'SELECT ROWID FROM '||p_table_name
+
+    BULK COLLECT INTO v_rids;
+
+ 
+
+  FOR i IN 1..v_rids.COUNT LOOP
+
+    SELECT street_no INTO v_no FROM (SELECT street_no FROM street_numbers ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM=1;
+
+    SELECT name      INTO v_st FROM (SELECT name      FROM street_names   ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM=1;
+
+    SELECT city      INTO v_ct FROM (SELECT city      FROM cities         ORDER BY DBMS_RANDOM.VALUE) WHERE ROWNUM=1;
+
+ 
+
+    EXECUTE IMMEDIATE
+
+      'UPDATE '||p_table_name||
+
+      ' SET '||p_column||' = :1 WHERE ROWID = :2'
+
+      USING (v_no||' '||v_st||', '||v_ct), v_rids(i);
+
+  END LOOP;
+
+ 
+
+  COMMIT;
+
+END;
+
+/
+
+
+ 
+
+CREATE OR REPLACE PROCEDURE fake_national_id(
+
+  p_table_name IN VARCHAR2,
+
+  p_column     IN VARCHAR2 DEFAULT 'national_id'
+
+) IS
+
+  TYPE rid_tab_t IS TABLE OF ROWID;
+
+  v_rids rid_tab_t;
+
+  v_nid  VARCHAR2(14);
+
+BEGIN
+
+  EXECUTE IMMEDIATE
+
+    'SELECT ROWID FROM '||p_table_name
+
+    BULK COLLECT INTO v_rids;
+
+ 
+
+  FOR i IN 1..v_rids.COUNT LOOP
+
+    v_nid := CASE WHEN TO_CHAR(SYSDATE,'YYYY') >= '2000' THEN '3' ELSE '2' END
+
+          || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(0,100)),'FM00')
+
+          || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1,13)),'FM00')
+
+          || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1,29)),'FM00')
+
+          || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(1,30)),'FM00')
+
+          || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(0,10000)),'FM0000')
+
+          || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(0,10)),'FM0');
+
+ 
+
+    EXECUTE IMMEDIATE
+
+      'UPDATE '||p_table_name||
+
+      ' SET '||p_column||' = :1 WHERE ROWID = :2'
+
+      USING v_nid, v_rids(i);
+
+  END LOOP;
+
+ 
+
+  COMMIT;
+
+END;
+
+/
+
+
+ 
+
+CREATE OR REPLACE PROCEDURE scramble_swap(
+
+  p_table_name IN VARCHAR2,
+
+  p_column     IN VARCHAR2 DEFAULT 'account_number',
+
+  p1           IN PLS_INTEGER,
+
+  p2           IN PLS_INTEGER
+
+) AS
+
+BEGIN
+
+  EXECUTE IMMEDIATE
+
+    'UPDATE '||p_table_name||
+
+    ' SET '||p_column||'= swap_digits('||p_column||','||p1||','||p2||')';
+
+  COMMIT;
+
+END;
+
+/
+
+
+ 
+
+CREATE OR REPLACE PROCEDURE scramble_mod(
+
+  p_table_name IN VARCHAR2,
+
+  p_column     IN VARCHAR2 DEFAULT 'account_number',
+
+  p1           IN PLS_INTEGER,
+
+  p2           IN PLS_INTEGER
+
+) AS
+
+BEGIN
+
+  EXECUTE IMMEDIATE
+
+    'UPDATE '||p_table_name||
+
+    ' SET '||p_column||'= mod_digits('||p_column||','||p1||','||p2||')';
+
+  COMMIT;
+
+END;
+
+/
+
+
+
+ 
+
+CREATE OR REPLACE PROCEDURE mask_card(
+
+  p_table_name IN VARCHAR2,
+
+  p_column     IN VARCHAR2 DEFAULT 'card_number'
+
+) AS
+
+BEGIN
+
+  EXECUTE IMMEDIATE
+
+    'UPDATE '||p_table_name||
+
+    ' SET '||p_column||'= mask_card_number('||p_column||')';
+
+  COMMIT;
+
+END;
+
+/
+
+
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- FAKE EMAIL BASED ON RANDOM NAMES (from lookup table "names")
+--------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE fake_email(
+    p_table_name   IN VARCHAR2,
+    p_column       IN VARCHAR2
+) IS
+    TYPE rid_tab_t IS TABLE OF ROWID;
+    v_rids   rid_tab_t;
+    v_name   NVARCHAR2(100);
+BEGIN
+    -- Collect all rowids of the target table
+    EXECUTE IMMEDIATE
+        'SELECT ROWID FROM ' || p_table_name
+        BULK COLLECT INTO v_rids;
+
+    -- Loop through each row and assign a fake email
+    FOR i IN 1..v_rids.COUNT LOOP
+        -- Pick a random name from names lookup table
+        SELECT name
+        INTO v_name
+        FROM (
+            SELECT name FROM names ORDER BY DBMS_RANDOM.VALUE
+        )
+        WHERE ROWNUM = 1;
+
+        -- Update the row with a generated email
+        EXECUTE IMMEDIATE
+            'UPDATE ' || p_table_name ||
+            ' SET ' || p_column || ' = :1 WHERE ROWID = :2'
+        USING LOWER(v_name) || TRUNC(DBMS_RANDOM.VALUE(100,9999)) || '@gmail.com', v_rids(i);
+    END LOOP;
+
+    COMMIT;
+END;
+/
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- FAKE PHONE NUMBER
+-- Generates Egyptian-style 11-digit phone numbers starting with 010, 011, 012, or 015
+--------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE fake_phone(
+  p_table_name IN VARCHAR2,
+  p_column     IN VARCHAR2 DEFAULT 'phone_number'
+) IS
+BEGIN
+  EXECUTE IMMEDIATE
+    'UPDATE '||p_table_name|| 
+    ' SET '||p_column||' = 
+        CASE TRUNC(DBMS_RANDOM.VALUE(1,5))
+          WHEN 1 THEN ''010''
+          WHEN 2 THEN ''011''
+          WHEN 3 THEN ''012''
+          ELSE ''015''
+        END
+        || TO_CHAR(TRUNC(DBMS_RANDOM.VALUE(10000000,99999999)))';
+  -- Ensures total length = 11 digits
+  COMMIT;
+END;
+/
+
+--------------------------------------------------------------------------------
+
+-- ============================================
+-- 8) EXECUTE ANONYMIZATION
+-- ============================================
+BEGIN
+  fake_name       ('mydata2','name');
+  fake_address    ('mydata2','address');
+  fake_national_id('mydata2','national_id');
+  scramble_swap   ('mydata2','account_number',1,6);
+  scramble_mod    ('mydata2','account_number',4,8);
+  mask_card       ('mydata2','card_number');
+  fake_email      ('mydata2','email');
+  fake_phone      ('mydata2','phone_number');
+END;
+/
+
+-- ============================================
+-- 9) VIEW RESULTS
+-- ============================================
+
+SELECT * FROM mydata2;
